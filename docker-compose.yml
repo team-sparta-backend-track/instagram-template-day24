@@ -128,6 +128,9 @@ services:
       - SPRING_JPA_HIBERNATE_DDL_AUTO=validate           # app 이 만든 스키마 검증만
       - SPRING_BATCH_JDBC_INITIALIZE_SCHEMA=never        # 배치 메타 테이블 두 번 만들지 않음
       - SPRING_SQL_INIT_MODE=never                       # data.sql / ddl.sql 시드 두 번 실행 방지
+      - APP_SEED_ENABLED=false                           # TestDataInit ApplicationRunner 비활성화
+        # — 두 인스턴스가 동시에 시드 시 unique key 충돌 방지
+      # (count()==0 가드는 race condition 으로 무력화됨)
     depends_on:
       app:
         condition: service_started    # app 의 빌드 산출물(image)을 재사용하므로 빌드 선행 보장

@@ -16,6 +16,7 @@ import com.example.instagramclone.domain.post.domain.PostRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -24,8 +25,24 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 테스트 시드 데이터 자동 등록.
+ *
+ * <p><b>Day 24 멀티 서버 시뮬레이션 가드</b> ({@code app.seed.enabled})<br>
+ * {@code @ConditionalOnProperty(matchIfMissing = true)} 로 디폴트 활성화 — 단일 인스턴스나
+ * 8090(app) 처럼 시드 책임을 가진 컨테이너에서는 그대로 동작한다.
+ * 패턴 C 의 8091(app-8091) 처럼 두 번째 인스턴스에서는 환경변수
+ * {@code APP_SEED_ENABLED=false} 로 비활성화해 race condition 충돌을 방지한다.</p>
+ *
+ * <p>왜 {@code memberRepository.count() > 0} 가드만으로는 부족한가?<br>
+ * 두 인스턴스가 거의 동시에 부팅하면 양쪽 모두 {@code count() == 0} 을 통과한
+ * 뒤 INSERT 를 시도한다. 한쪽이 commit 한 직후 다른 쪽은 unique key 충돌
+ * ({@code Duplicate entry 'kuromi' for key 'users.UK...'}) 로 부팅 실패.
+ * 명시적으로 한 인스턴스에서만 시드를 돌리는 게 정답.</p>
+ */
 @Order(1)
 @Component
+@ConditionalOnProperty(name = "app.seed.enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 public class TestDataInit implements ApplicationRunner {
 
@@ -239,7 +256,7 @@ public class TestDataInit implements ApplicationRunner {
         Member heartping = members.get(4);
 
         // --- 쿠로미(kuromi) 1번 게시글: 원댓·대댓 풍부 (네이티브 SQL GROUP BY parent_id 집계 예시용) ---
-        // 원댓 6개, 대댓 분포: 4 / 3 / 2 / 2 / 1 / 0 
+        // 원댓 6개, 대댓 분포: 4 / 3 / 2 / 2 / 1 / 0
         Post kuromiPost0 = postsByMember.get(0).get(0);
         Comment kR1 = commentRepository.save(Comment.create(kuromiPost0, mamel, "쿠로미도 오늘 너무 귀여워~", null));
         Comment kR2 = commentRepository.save(Comment.create(kuromiPost0, pikachu, "피카피카! 응원이야", null));
