@@ -21,12 +21,15 @@ version: '3.8'
 #             resolution 이 서버별로 어떻게 동작하는지를 진짜로 검증할 수 있다.
 #
 # [패턴 C 주의]
-#   - 두 컨테이너가 같은 ddl-auto=create DB 를 공유하므로 동시 기동 시
-#     스키마 재생성 경합이 일어날 수 있다. 강의 데모용 짧은 시연이면 무해하지만,
-#     반복 시연이 필요하면 한 인스턴스만 ddl-auto=create, 나머지는 validate 로
-#     분리하거나 데이터 초기화 후 재기동을 권장.
+#   - 8090(app)이 스키마/데이터 초기화를 단독 담당, 8091(app-8091)은 init 모두 비활성화.
+#     동시에 ddl-auto=create 로 부팅하면 MySQL InnoDB Deadlock 이 터진다.
+#     아래 app-8091 의 환경변수 (DDL_AUTO=validate, BATCH_INITIALIZE=never,
+#     SQL_INIT_MODE=never) 가 그 분리를 강제한다. 직접 수정하지 말 것.
 #   - JWT_SECRET_KEY 는 두 인스턴스 모두 같은 값이어야 한 인스턴스에서 발급한
 #     토큰을 다른 인스턴스가 검증할 수 있다. .env 파일로 공유.
+#   - app-8091 이 첫 부팅에서 "schema not found" 로 실패할 수 있다 (app 의
+#     스키마 생성이 아직 안 끝난 시점). restart: on-failure 가 자동 재시도하므로
+#     30~60초 안에 안정화된다. docker compose ps 로 확인.
 #
 # ================================================================
 
@@ -101,6 +104,15 @@ services:
   # (브라우저가 어느 포트로 연결했냐에 따라 그 컨테이너로 고정된다).
   #
   # 멀티 서버 검증이 필요 없을 때는 이 서비스를 주석 처리해도 된다.
+  #
+  # ⚠ 스키마/데이터 초기화 분리 (필수)
+  # ─────────────────────────────────────────────────────────────
+  # 두 컨테이너가 동시에 ddl-auto=create 로 부팅하면 MySQL 테이블에
+  # DROP/CREATE 락을 서로 잡아 InnoDB Deadlock 이 터진다. 데이터 시드
+  # (sql/ddl.sql), Spring Batch 메타 테이블 INSERT 도 마찬가지.
+  #
+  # 해결: 8090(app) 단독으로 스키마+데이터 초기화 책임. 8091 은 모든 init 비활성화.
+  # 첫 부팅 순서가 어긋나도 restart: on-failure 로 자동 복구.
   app-8091:
     image: instagram-clone-app:latest   # app 의 빌드 결과를 그대로 재사용
     container_name: instagram-clone-app-8091
@@ -112,6 +124,10 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SERVER_PORT=8091              # 컨테이너 내부에서도 8091 listen
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      # ── 스키마/데이터 초기화 비활성화 (app 인스턴스가 단독 담당) ──
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=validate           # app 이 만든 스키마 검증만
+      - SPRING_BATCH_JDBC_INITIALIZE_SCHEMA=never        # 배치 메타 테이블 두 번 만들지 않음
+      - SPRING_SQL_INIT_MODE=never                       # data.sql / ddl.sql 시드 두 번 실행 방지
     depends_on:
       app:
         condition: service_started    # app 의 빌드 산출물(image)을 재사용하므로 빌드 선행 보장
@@ -119,6 +135,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # 첫 부팅 시 app 의 스키마 준비가 아직 안 끝났을 수 있다 (validate 가 schema 없음으로 실패).
+    # on-failure 로 재시작하면 app 이 schema 만든 뒤 두 번째 시도에서 성공.
+    restart: on-failure
     volumes:
       # 두 인스턴스가 같은 업로드 디렉터리를 공유 — 어느 쪽에서 업로드해도 양쪽에서 서빙됨
       - ${HOME}/instagram-clone/uploads:/root/instagram-clone/uploads
